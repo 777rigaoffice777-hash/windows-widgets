@@ -46,6 +46,12 @@ Main() {
         Uninstall(true)
         ExitApp
     }
+    if (cmd = "install") {                     ; silent install (used by install.ps1): no questions
+        err := Install()
+        if (err = "")
+            Run('"' A_AhkPath '" "' INSTALLED_SCRIPT '"')
+        ExitApp(err = "" ? 0 : 1)
+    }
     if (!portable && A_ScriptFullPath != INSTALLED_SCRIPT) {
         r := MsgBox("Установить «Календарь недель» на этот компьютер?`n`n"
             . "Он скопируется в вашу папку программ и будет сам запускаться при входе в Windows.`n`n"

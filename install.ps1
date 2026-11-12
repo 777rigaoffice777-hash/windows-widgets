@@ -41,8 +41,10 @@ try {
 
     Write-Host '3/3  Устанавливаю и запускаю...'
     foreach ($f in $files) {
-        $p = Start-Process -FilePath $ahk -ArgumentList "`"$f`"", '--install' -Wait -PassThru
-        if ($p.ExitCode -ne 0) { throw "виджет $([IO.Path]::GetFileNameWithoutExtension($f)) не установился (код $($p.ExitCode))" }
+        # Not "Start-Process -Wait": it would also wait for the widget that --install starts (it never exits).
+        $p = Start-Process -FilePath $ahk -ArgumentList "`"$f`"", '--install' -PassThru
+        Wait-Process -Id $p.Id -Timeout 60 -ErrorAction SilentlyContinue
+        if ($p.ExitCode -ne 0) { throw "виджет $(Split-Path $f -Leaf) не установился (код $($p.ExitCode))" }
     }
 
     Write-Host ''
