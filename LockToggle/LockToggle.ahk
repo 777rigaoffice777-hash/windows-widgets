@@ -9,7 +9,7 @@ Persistent
 DetectHiddenWindows true
 CoordMode "Mouse", "Screen"
 
-global APP_NAME := "LockToggle", APP_TITLE := "Блокировка экрана", APP_VER := "1.5"
+global APP_NAME := "LockToggle", APP_TITLE := "Блокировка экрана", APP_VER := "1.6"
 global RUN_KEY := "HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 global UNINST_KEY := "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\LockToggle"
 global DESKTOP_KEY := "HKCU\Control Panel\Desktop"
@@ -487,7 +487,7 @@ class Widget {
     static isOn := true, hover := -1, pressed := -1, sliding := false, tracking := false
     static rMain := [0, 0, 0, 0], rHours := [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], rSlider := [0, 0, 0, 0]
     static trackX0 := 0, trackX1 := 0
-    static fMain := 0, fSub := 0, fBtn := 0
+    static fMain := 0, fSub := 0, fBtn := 0, fVer := 0
 
     static S(v) => v * this.sc
 
@@ -499,6 +499,7 @@ class Widget {
         this.fMain := Gp.Font("Segoe UI Semibold", 15 * this.sc)
         this.fSub := Gp.Font("Segoe UI", 12 * this.sc)
         this.fBtn := Gp.Font("Segoe UI Semibold", 13 * this.sc)
+        this.fVer := Gp.Font("Segoe UI", 10 * this.sc)
 
         g := Gui("-Caption +ToolWindow +E0x80000 -DPIScale" (Cfg.TopMost ? " +AlwaysOnTop" : ""), APP_TITLE)
         this.gui := g, this.hwnd := g.Hwnd
@@ -1070,7 +1071,8 @@ class Widget {
         ; ---- timer buttons ----
         ry := r[2] + r[4] + S(6), rh := S(32)
         labelW := S(68)
-        this.Txt(g, "Снять на:", this.fSub, fg, pad + S(2), ry, labelW, rh, 0)
+        this.Txt(g, "Снять на:", this.fSub, fg, pad + S(2), ry + S(1), labelW, S(17), 0)
+        this.Txt(g, "версия " APP_VER, this.fVer, dim, pad + S(2), ry + S(17), labelW, S(14), 0)   ; updates itself with the widget
         gap := S(6)
         bw := (W - 2 * pad - labelW - 2 * gap) / 3
         Loop 3 {
