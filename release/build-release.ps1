@@ -15,7 +15,7 @@ New-Item -ItemType Directory -Force $bundle | Out-Null
 $ahkZip = Join-Path $work 'ahk.zip'
 Invoke-WebRequest -UseBasicParsing "https://github.com/AutoHotkey/AutoHotkey/releases/download/v$ahkVer/AutoHotkey_$ahkVer.zip" -OutFile $ahkZip
 if ((Get-FileHash $ahkZip).Hash -ne $zipSha) { throw 'AutoHotkey zip hash mismatch' }
-tar -xf $ahkZip -C $bundle AutoHotkey64.exe license.txt
+& (Join-Path $env:WINDIR 'System32\tar.exe') -xf $ahkZip -C $bundle AutoHotkey64.exe license.txt   # Windows tar, not Git's GNU tar
 if ((Get-FileHash (Join-Path $bundle 'AutoHotkey64.exe')).Hash -ne $exeSha) { throw 'AutoHotkey64.exe hash mismatch' }
 Copy-Item (Join-Path $PSScriptRoot 'install-widgets.cmd'), (Join-Path $PSScriptRoot 'README.txt') $bundle
 Copy-Item (Join-Path $root 'LockToggle\LockToggle.ahk'), (Join-Path $root 'WeekCalendar\WeekCalendar.ahk') $bundle
