@@ -9,7 +9,7 @@ Persistent
 DetectHiddenWindows true
 CoordMode "Mouse", "Screen"
 
-global APP_NAME := "LockToggle", APP_TITLE := "Блокировка экрана", APP_VER := "1.4"
+global APP_NAME := "LockToggle", APP_TITLE := "Блокировка экрана", APP_VER := "1.5"
 global RUN_KEY := "HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 global UNINST_KEY := "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\LockToggle"
 global DESKTOP_KEY := "HKCU\Control Panel\Desktop"
@@ -312,6 +312,8 @@ Uninstall(ask) {
 class Cfg {
     static Transparency := 30, X := -2147483648, Y := -2147483648, TopMost := false
     static OffUntilUtc := 0, OffSlot := 0, LastUpdateCheck := 0, TrayPromoted := 0
+    static OffBoot := 0            ; boot stamp (UTC yyyyMMddHHmm) of the Windows session in which the lock was switched off
+    static RelockAfterBoot := 1    ; after a restart the lock always comes back on
     static Slots := [DEFAULT_SLOTS[1], DEFAULT_SLOTS[2], DEFAULT_SLOTS[3]]
 
     static Load() {
@@ -334,6 +336,8 @@ class Cfg {
                     case "OffSlot": this.OffSlot := Integer(v)
                     case "LastUpdateCheck": this.LastUpdateCheck := Integer(v)
                     case "TrayPromoted": this.TrayPromoted := Integer(v)
+                    case "OffBoot": this.OffBoot := Integer(v)
+                    case "RelockAfterBoot": this.RelockAfterBoot := Integer(v)
                     case "Slot1", "Slot2", "Slot3":
                         n := Integer(v)
                         if (n >= 1 && n <= MAX_SLOT_MIN)
@@ -350,7 +354,8 @@ class Cfg {
             f.Write("Transparency=" this.Transparency "`r`nX=" this.X "`r`nY=" this.Y "`r`nTopMost=" (this.TopMost ? "1" : "0")
                 . "`r`nOffUntilUtc=" this.OffUntilUtc "`r`nOffSlot=" this.OffSlot
                 . "`r`nSlot1=" this.Slots[1] "`r`nSlot2=" this.Slots[2] "`r`nSlot3=" this.Slots[3]
-                . "`r`nLastUpdateCheck=" this.LastUpdateCheck "`r`nTrayPromoted=" this.TrayPromoted "`r`n")
+                . "`r`nLastUpdateCheck=" this.LastUpdateCheck "`r`nTrayPromoted=" this.TrayPromoted
+                . "`r`nOffBoot=" this.OffBoot "`r`nRelockAfterBoot=" this.RelockAfterBoot "`r`n")
             f.Close()
         }
     }
@@ -513,6 +518,7 @@ class Widget {
             MonitorGetWorkArea(MonitorGetPrimary(), &l, &t, &r, &b)
             x := r - this.W - Integer(16 * this.sc), y := b - this.H - Integer(16 * this.sc)
         }
+        relocked := this.RelockIfRestarted(FileExist(SETTINGS_DIR "\updated.txt") != "")
         this.Check()
         g.Show("NA x" x " y" y " w" this.W " h" this.H)
         this.Render()
@@ -522,6 +528,8 @@ class Widget {
         v := Updater.TakeUpdatedMarker()
         if (v != "")
             TrayTip("Обновлено до версии " v, APP_TITLE, "Iconi")
+        else if relocked
+            TrayTip("Блокировка снова включена после перезагрузки.", APP_TITLE, "Iconi")
         SetTimer(ObjBindMethod(this, "PromoteTrayIcon"), -10000)
         SetTimer(ObjBindMethod(this, "PromoteTrayIcon"), -60000)
 
@@ -566,13 +574,46 @@ class Widget {
 
     static DoOn() {
         LockTurnOn()
-        Cfg.OffUntilUtc := 0, Cfg.OffSlot := 0
+        Cfg.OffUntilUtc := 0, Cfg.OffSlot := 0, Cfg.OffBoot := 0
         Cfg.Save()
         this.Check(), this.Render()
     }
 
+    ; When Windows was started (UTC, to the minute). GetTickCount64 keeps counting during sleep,
+    ; so the stamp only changes after a real restart.
+    static BootStamp() {
+        up := DllCall("GetTickCount64", "Int64") // 1000
+        return Integer(FormatTime(DateAdd(A_NowUTC, -up, "Seconds"), "yyyyMMddHHmm"))
+    }
+
+    static SameBoot(stamp) => stamp > 0 && Abs(DateDiff(stamp "00", this.BootStamp() "00", "Minutes")) <= 2
+
+    ; Lock is off but was switched off before the last restart (or outside the widget): switch it back on.
+    ; A restart of the widget itself (daily update, «Закрыть» and start again) keeps the lock as it was.
+    static RelockIfRestarted(justUpdated := false) {
+        if (!Cfg.RelockAfterBoot || LockIsOn() || this.SameBoot(Cfg.OffBoot))
+            return false
+        if (justUpdated && Cfg.OffBoot = 0) {     ; switched off by an older version (no stamp) and just updated: same session
+            Cfg.OffBoot := this.BootStamp()
+            Cfg.Save()
+            return false
+        }
+        LockTurnOn()
+        Cfg.OffUntilUtc := 0, Cfg.OffSlot := 0, Cfg.OffBoot := 0
+        Cfg.Save()
+        return true
+    }
+
+    static ToggleRelock() {
+        Cfg.RelockAfterBoot := Cfg.RelockAfterBoot ? 0 : 1
+        if (Cfg.RelockAfterBoot && !LockIsOn())
+            Cfg.OffBoot := this.BootStamp()     ; current switch-off still counts for this session
+        Cfg.Save()
+    }
+
     ; slot 0 = no time limit; slot 1..3 = timer button
     static DoOff(slot) {
+        Cfg.OffBoot := this.BootStamp()
         Cfg.OffSlot := slot
         Cfg.OffUntilUtc := slot > 0 ? UtcTicksNow() + Cfg.Slots[slot] * 600000000 : 0
         Cfg.Save()
@@ -781,6 +822,9 @@ class Widget {
         sl.Add("Подсказка: правая кнопка мыши по кнопке времени", (*) => 0)
         sl.Disable("Подсказка: правая кнопка мыши по кнопке времени")
         m.Add("Время кнопок", sl)
+        m.Add("Включать блокировку после перезагрузки", (*) => this.ToggleRelock())
+        if Cfg.RelockAfterBoot
+            m.Check("Включать блокировку после перезагрузки")
         m.Add("Поверх всех окон", (*) => this.ToggleTop())
         if Cfg.TopMost
             m.Check("Поверх всех окон")
