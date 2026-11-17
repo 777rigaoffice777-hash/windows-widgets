@@ -9,7 +9,7 @@ Persistent
 DetectHiddenWindows true
 CoordMode "Mouse", "Screen"
 
-global APP_NAME := "LockToggle", APP_TITLE := "Блокировка экрана", APP_VER := "1.6"
+global APP_NAME := "LockToggle", APP_TITLE := "Блокировка экрана", APP_VER := "1.7"
 global RUN_KEY := "HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 global UNINST_KEY := "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\LockToggle"
 global DESKTOP_KEY := "HKCU\Control Panel\Desktop"
@@ -88,7 +88,7 @@ Main() {
     MUTEX_HANDLE := DllCall("CreateMutex", "Ptr", 0, "Int", 1, "Str", "Local\LockToggle.SingleInstance", "Ptr")
     if (A_LastError = 183)   ; ERROR_ALREADY_EXISTS
         ExitApp
-    Widget.Start()
+    SafeStart(Widget)
 }
 
 ; ======================= Windows setting =======================
@@ -481,6 +481,92 @@ class Gp {
     }
 }
 
+; ======================= log, safe start, watchdog (same block in every widget) =======================
+; The log (%APPDATA%\<Name>\log.txt) shows what happened at startup on a computer we cannot look at.
+Log(msg) {
+    LOG_FILE := SETTINGS_DIR "\log.txt"
+    try {
+        DirCreate(SETTINGS_DIR)
+        if (FileExist(LOG_FILE) && FileGetSize(LOG_FILE) > 200000) {
+            try FileDelete(LOG_FILE ".old")
+            FileMove(LOG_FILE, LOG_FILE ".old")
+        }
+        FileAppend(FormatTime(, "yyyy-MM-dd HH:mm:ss") " [" DllCall("GetCurrentProcessId") "] " msg "`r`n", LOG_FILE, "UTF-8")
+    }
+}
+
+; No error dialog boxes: at logon one can hide behind other windows and the widget looks frozen. Log it instead.
+LogUnhandled(e, mode) {
+    Log("ОШИБКА: " e.Message " | " e.What " | строка " e.Line (e.Extra != "" ? " | " e.Extra : ""))
+    return 1
+}
+
+UptimeMin() => Round(DllCall("GetTickCount64", "Int64") / 60000, 1)
+ShellReady() => WinExist("ahk_class Shell_TrayWnd") && WinExist("ahk_class Progman")
+
+; At logon the task starts us within seconds, sometimes before the desktop and the taskbar exist: wait for them
+; (max 2 min), then start; if starting fails, try again (5 times, every 15 s).
+SafeStart(cls) {
+    OnError(LogUnhandled)
+    OnExit((reason, code) => (Log("выход: " reason), 0))
+    Log("старт " APP_NAME " " APP_VER ", с включения Windows " UptimeMin() " мин, мониторов " MonitorGetCount() ", DPI " A_ScreenDPI)
+    t0 := A_TickCount
+    while (!ShellReady() && A_TickCount - t0 < 120000)
+        Sleep 1000
+    if (A_TickCount - t0 > 1500)
+        Log("ждал рабочий стол " Round((A_TickCount - t0) / 1000) " с" (ShellReady() ? "" : ", так и не дождался"))
+    Loop 5 {
+        try {
+            cls.Start()
+            WinGetPos(&x, &y, &w, &h, cls.hwnd)
+            Log("виджет показан: " x "," y " " w "x" h)
+            SetTimer(Watchdog.Bind(cls), 30000)
+            OnMessage(DllCall("RegisterWindowMessage", "Str", "TaskbarCreated", "UInt"), TaskbarCreated.Bind(cls))
+            return
+        } catch as e {
+            Log("не запустился (попытка " A_Index "): " e.Message " | строка " e.Line)
+            try cls.gui.Destroy()
+            cls.gui := 0, cls.hwnd := 0
+            Sleep 15000
+        }
+    }
+    Log("так и не запустился, выхожу")
+    ExitApp
+}
+
+TaskbarCreated(cls, *) {
+    Log("панель задач запущена заново")
+    SetTimer(() => cls.Render(), -1000)
+}
+
+; Every 30 s: the window must be shown and lie on some screen; otherwise show it again. Once an hour: "работает" in the log.
+Watchdog(cls) {
+    static lastAlive := 0
+    if (A_TickCount - lastAlive > 3600000) {
+        lastAlive := A_TickCount
+        Log("работает")
+    }
+    h := cls.hwnd
+    if !h
+        return
+    if !DllCall("IsWindowVisible", "Ptr", h) {
+        Log("окно было скрыто, показываю снова")
+        cls.gui.Show("NA")
+        cls.Render()
+        return
+    }
+    WinGetPos(&x, &y, &w, &hh, h)
+    Loop MonitorGetCount() {
+        MonitorGetWorkArea(A_Index, &l, &t, &r, &b)
+        if (x + 20 >= l && x + 20 < r && y + 20 >= t && y + 20 < b)
+            return
+    }
+    MonitorGetWorkArea(MonitorGetPrimary(), &l, &t, &r, &b)
+    nx := r - w - 16, ny := t + 16
+    Log("окно за пределами экранов (" x "," y "), переношу на " nx "," ny)
+    WinMove(nx, ny, , , h)
+    cls.Render()
+}
 ; ======================= the widget =======================
 class Widget {
     static gui := 0, hwnd := 0, sc := 1, W := 0, H := 0
